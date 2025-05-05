@@ -248,8 +248,8 @@ def posts_to_dataframe(posts, api=None, owner_id=None, group_link=None, table_na
         logger.error(f"Ошибка при создании DataFrame: {str(e)}")
         return pd.DataFrame()
 
-def get_vk_group_posts_last_month(group_url, token, table_name, max_count=1000):
-    """Получает все посты из группы за последний месяц, обходя лимит в 100 постов"""
+def get_vk_group_posts_last_month(group_url, token, table_name, days_back=100):
+    """Получает все посты из группы за указанное количество дней, обходя лимит в 100 постов"""
     try:
         vk_session = vk_api.VkApi(token=token)
         api = vk_session.get_api()
@@ -264,6 +264,10 @@ def get_vk_group_posts_last_month(group_url, token, table_name, max_count=1000):
             logger.error(f"Не удалось получить ID группы для {screen_name}")
             return pd.DataFrame()
 
+        # Рассчитываем дату для ограничения выборки
+        cutoff_date = datetime.now() - timedelta(days=days_back)
+        cutoff_timestamp = int(cutoff_date.timestamp())
+        
         all_posts = []
         offset = 0
         batch_size = 100
@@ -277,33 +281,53 @@ def get_vk_group_posts_last_month(group_url, token, table_name, max_count=1000):
                 if not items:
                     break
 
-                for item in items:
-                    post = {
-                        'id': item.get('id'),
-                        'date': item.get('date'),
-                        'text': item.get('text', ''),
-                        'likes': item.get('likes', {}).get('count', 0),
-                        'reposts': item.get('reposts', {}).get('count', 0),
-                        'comments': item.get('comments', {}).get('count', 0),
-                        'views': item.get('views', {}).get('count', 0),
-                        'attachments': item.get('attachments', []),
-                        'is_pinned': item.get('is_pinned', 0),
-                        'post_type': item.get('post_type', ''),
-                        'signer_id': item.get('signer_id', None),
-                        "table_name": table_name
-                    }
-                    all_posts.append(post)
-                break
-                offset += batch_size
-                time.sleep(0.34)
-
-                if offset >= max_count:
+                # Проверяем, достигли ли мы указанной даты
+                oldest_post_date = items[-1].get('date', 0)
+                if oldest_post_date < cutoff_timestamp:
+                    # Добавляем только посты после cutoff_date
+                    for item in items:
+                        if item.get('date', 0) >= cutoff_timestamp:
+                            post = {
+                                'id': item.get('id'),
+                                'date': item.get('date'),
+                                'text': item.get('text', ''),
+                                'likes': item.get('likes', {}).get('count', 0),
+                                'reposts': item.get('reposts', {}).get('count', 0),
+                                'comments': item.get('comments', {}).get('count', 0),
+                                'views': item.get('views', {}).get('count', 0),
+                                'attachments': item.get('attachments', []),
+                                'is_pinned': item.get('is_pinned', 0),
+                                'post_type': item.get('post_type', ''),
+                                'signer_id': item.get('signer_id', None),
+                                "table_name": table_name
+                            }
+                            all_posts.append(post)
                     break
+                else:
+                    # Добавляем все посты из пакета
+                    for item in items:
+                        post = {
+                            'id': item.get('id'),
+                            'date': item.get('date'),
+                            'text': item.get('text', ''),
+                            'likes': item.get('likes', {}).get('count', 0),
+                            'reposts': item.get('reposts', {}).get('count', 0),
+                            'comments': item.get('comments', {}).get('count', 0),
+                            'views': item.get('views', {}).get('count', 0),
+                            'attachments': item.get('attachments', []),
+                            'is_pinned': item.get('is_pinned', 0),
+                            'post_type': item.get('post_type', ''),
+                            'signer_id': item.get('signer_id', None),
+                            "table_name": table_name
+                        }
+                        all_posts.append(post)
+
+                offset += batch_size
+                time.sleep(0.34)  # Задержка чтобы избежать rate limiting
 
             except Exception as e:
                 logger.error(f"Ошибка при получении постов (offset={offset}): {str(e)}")
                 break
-            break
 
         all_posts_df = posts_to_dataframe(all_posts, api, group_id, group_url, table_name)
         return all_posts_df

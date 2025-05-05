@@ -67,7 +67,6 @@ async def parse_telegram_channel(channel_url, table_name, days_back=30, use_memo
             }
 
             posts_data.append(post_info)
-            break
 
         return pd.DataFrame(posts_data)
 

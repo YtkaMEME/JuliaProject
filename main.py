@@ -3,12 +3,13 @@ import os
 import json
 import asyncio
 import logging
+import argparse
 from gettext import textdomain
 from typing import List
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta, time
+import time as time_module
 from functools import wraps
-
 from markdown_it.common.html_re import comment
 
 from AI.sentiment_analysis import predict_sentiment
@@ -87,7 +88,7 @@ async def concat_vk_tg_dfs(df_telegram: pd.DataFrame, df_vk: pd.DataFrame):
     combined_df = pd.concat([df_telegram_norm, df_vk_norm], ignore_index=True)
     return combined_df
 
-async def   process_social_media_data(links: List[str], token: str, table_name: str, source: str):
+async def process_social_media_data(links: List[str], token: str, table_name: str, source: str, days_back=100):
     """Обрабатывает данные из социальных сетей"""
     try:
         all_data = []
@@ -95,9 +96,9 @@ async def   process_social_media_data(links: List[str], token: str, table_name: 
         for link in links:
             try:
                 if source.lower() == "vk":
-                    df = get_vk_group_posts_last_month(link, token, table_name, 500)
+                    df = get_vk_group_posts_last_month(link, token, table_name, days_back)
                 else:  # telegram
-                    df = await parse_telegram_channel(link, table_name)
+                    df = await parse_telegram_channel(link, table_name, days_back)
 
                 if df is not None and not df.empty:
                     df['sentiment_score'] = df['all_comments'].apply(predict_sentiment)
@@ -116,7 +117,7 @@ async def   process_social_media_data(links: List[str], token: str, table_name: 
         logger.error(f"Ошибка при обработке данных: {str(e)}")
 
 @measure_time
-async def main():
+async def process_data(days_back=100):
     try:
         # Telegram
         telegram_json_paths = [
@@ -157,19 +158,88 @@ async def main():
                     continue
 
                 table_name = json_path_telegram.split('/')[2].split('.')[0].lower().replace('-', '_')
-                dfs_telegram = await process_social_media_data(links, None, table_name, 'telegram')
+                dfs_telegram = await process_social_media_data(links, None, table_name, 'telegram', days_back)
 
                 json_path_vk = vk_json_paths[index]
                 links = extract_links_from_json(json_path_vk)
-                dfs_vk = await process_social_media_data(links, token, table_name, 'vk')
+                dfs_vk = await process_social_media_data(links, token, table_name, 'vk', days_back)
                 final_df = await concat_vk_tg_dfs(dfs_telegram, dfs_vk)
                 db = DataBase(DB_CONFIG)
-                await db.save_social_media_posts_to_postgresql(final_df, "all_data")
+                await db.save_social_media_posts_to_postgresql(final_df, table_name)
                 logger.info(f"Данные успешно сохранены в таблицу {table_name}")
 
             except Exception as e:
                 logger.error(f"Ошибка при обработке файла {json_path_telegram}: {str(e)}")
                 continue
+    except Exception as e:
+        logger.error(f"Критическая ошибка в main: {str(e)}")
+
+async def daily_update():
+    """Обновляет данные ежедневно, удаляя самые старые записи и добавляя новые"""
+    db = DataBase(DB_CONFIG)
+    today = datetime.now().date()
+    yesterday = today - timedelta(days=1)
+    
+    # Список таблиц для обновления
+    tables = [
+        'gaming_and_esports',
+        'self_development_and_career',
+        'personal_finance_and_investments',
+        'social_networks_and_trends',
+        'psychology_and_mental_health',
+        'politics_and_civic_position',
+        'education_and_science',
+        'lifestyle_and_fashion',
+        'cooking_and_healthy_lifestyle',
+        'technologies_and_neural_networks'
+    ]
+    
+    for table in tables:
+        # Удаляем самые старые записи (посты самого старого дня)
+        await db.delete_oldest_day_posts(table)
+        logger.info(f"Удалены самые старые посты из таблицы {table}")
+    
+    # Запускаем парсинг данных за вчерашний день
+    await process_data(days_back=1)
+    logger.info(f"Добавлены новые посты за {yesterday}")
+
+async def wait_until_midnight():
+    """Ожидает до полуночи следующего дня"""
+    now = datetime.now()
+    midnight = datetime.combine(now.date() + timedelta(days=1), time(0, 0))
+    seconds_until_midnight = (midnight - now).total_seconds()
+    
+    logger.info(f"Ожидание до полуночи: {seconds_until_midnight} секунд")
+    await asyncio.sleep(seconds_until_midnight)
+
+async def scheduled_updates():
+    """Запускает ежедневные обновления в полночь"""
+    while True:
+        await wait_until_midnight()
+        logger.info("Запуск ежедневного обновления данных")
+        await daily_update()
+
+@measure_time
+async def main():
+    # Настройка аргументов командной строки
+    parser = argparse.ArgumentParser(description='Система парсинга данных из социальных сетей')
+    parser.add_argument('--mode', choices=['full', 'daily'], default='full',
+                      help='Режим работы: full - парсинг за 100 дней, daily - ежедневное обновление')
+    parser.add_argument('--days', type=int, default=3,
+                      help='Количество дней для парсинга (только для режима full)')
+    
+    args = parser.parse_args()
+    
+    try:
+        if args.mode == 'full':
+            logger.info(f"Запуск полного парсинга за последние {args.days} дней")
+            await process_data(days_back=args.days)
+        else:  # daily mode
+            logger.info("Запуск в режиме ежедневного обновления")
+            # Сначала запустим обновление сразу
+            await daily_update()
+            # Затем настроим ежедневное обновление в полночь
+            await scheduled_updates()
     except Exception as e:
         logger.error(f"Критическая ошибка в main: {str(e)}")
 

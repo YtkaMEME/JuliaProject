@@ -92,3 +92,44 @@ class DataBase:
         finally:
             cursor.close()
             conn.close()
+
+    async def delete_oldest_day_posts(self, table_name: str):
+        """
+        Удаляет посты самого старого дня из таблицы
+        
+        :param table_name: Название таблицы
+        """
+        conn, cursor = self.connect_to_db()
+        try:
+            # Сначала находим самую старую дату
+            find_oldest_date_query = f"""
+            SELECT DATE(date) as post_date
+            FROM {table_name}
+            ORDER BY date ASC
+            LIMIT 1;
+            """
+            cursor.execute(find_oldest_date_query)
+            result = cursor.fetchone()
+            
+            if not result:
+                print(f"⚠️ Таблица '{table_name}' пуста или не существует.")
+                return
+                
+            oldest_date = result[0]
+            
+            # Удаляем все записи этого дня
+            delete_query = f"""
+            DELETE FROM {table_name}
+            WHERE DATE(date) = %s;
+            """
+            cursor.execute(delete_query, (oldest_date,))
+            deleted_count = cursor.rowcount
+            conn.commit()
+            print(f"✅ Удалено {deleted_count} записей за {oldest_date} из таблицы '{table_name}'")
+            
+        except Exception as e:
+            conn.rollback()
+            print(f"❌ Ошибка при удалении старых записей из таблицы '{table_name}': {e}")
+        finally:
+            cursor.close()
+            conn.close()

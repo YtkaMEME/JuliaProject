@@ -8,6 +8,7 @@
 - Анализ метрик каналов (подписчики, просмотры, репосты)
 - Сохранение данных в PostgreSQL
 - Резервное копирование в Google Sheets
+- Два режима работы: полный парсинг и ежедневное обновление
 
 ## Установка
 
@@ -47,9 +48,20 @@ DB_PORT=5432
 
 ## Использование
 
-Запустите основной скрипт:
+### Режимы работы:
+
+1. **Полный парсинг** - сбор данных за последние 100 дней:
 ```bash
-python main_bot.py
+python main.py --mode full
+```
+Или с указанием количества дней:
+```bash
+python main.py --mode full --days 50
+```
+
+2. **Ежедневное обновление** - запускается в режиме daemon и обновляет базу каждый день в 00:00. При этом удаляются записи за самый старый день и добавляются посты за текущий день:
+```bash
+python main.py --mode daily
 ```
 
 ## Структура проекта
@@ -61,7 +73,14 @@ telegram-channel-analyzer/
 │   └── key_google.json
 ├── Telegram_channel/
 │   └── *.json
-├── main_bot.py
+├── VK_pars/
+│   └── *.json
+├── Data_base/
+│   └── Data_base.py
+├── AI/
+│   └── sentiment_analysis.py
+├── main.py
+├── help_defs.py
 ├── requirements.txt
 └── README.md
 ```
